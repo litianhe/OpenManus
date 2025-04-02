@@ -14,6 +14,7 @@ class ToolCollection:
     def __init__(self, *tools: BaseTool):
         self.tools = tools
         self.tool_map = {tool.name: tool for tool in tools}
+        print("")
 
     def __iter__(self):
         return iter(self.tools)

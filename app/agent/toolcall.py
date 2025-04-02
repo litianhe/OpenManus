@@ -7,9 +7,9 @@ from app.agent.react import ReActAgent
 from app.exceptions import TokenLimitExceeded
 from app.logger import logger
 from app.prompt.toolcall import NEXT_STEP_PROMPT, SYSTEM_PROMPT
-from app.schema import TOOL_CHOICE_TYPE, AgentState, Message, ToolCall, ToolChoice
+from app.schema import (TOOL_CHOICE_TYPE, AgentState, Message, ToolCall,
+                        ToolChoice)
 from app.tool import CreateChatCompletion, Terminate, ToolCollection
-
 
 TOOL_CALL_REQUIRED = "Tool calls required but none provided"
 
@@ -26,6 +26,8 @@ class ToolCallAgent(ReActAgent):
     available_tools: ToolCollection = ToolCollection(
         CreateChatCompletion(), Terminate()
     )
+
+
     tool_choices: TOOL_CHOICE_TYPE = ToolChoice.AUTO  # type: ignore
     special_tool_names: List[str] = Field(default_factory=lambda: [Terminate().name])
 
@@ -75,17 +77,25 @@ class ToolCallAgent(ReActAgent):
             response.tool_calls if response and response.tool_calls else []
         )
         content = response.content if response and response.content else ""
+        if hasattr(response, "reasoning_content"):
+            content = response.reasoning_content if response.reasoning_content else content
 
         # Log response info
         logger.info(f"✨ {self.name}'s thoughts: {content}")
         logger.info(
             f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
         )
+        # if tool_calls:
+        #     logger.info(
+        #         f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
+        #     )
+        #     logger.info(f"🔧 Tool arguments: {tool_calls[0].function.arguments}")
+
         if tool_calls:
-            logger.info(
-                f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
-            )
-            logger.info(f"🔧 Tool arguments: {tool_calls[0].function.arguments}")
+            for tool in tool_calls:
+                name = tool.function.name
+                args = tool.function.arguments
+                logger.info(f"    🧰 Tools being prepared '{name}' with arguments: '{args}'")
 
         try:
             if response is None:
@@ -147,7 +157,7 @@ class ToolCallAgent(ReActAgent):
                 result = result[: self.max_observe]
 
             logger.info(
-                f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
+                f"🎯 Tool '{command.function.name}' with args {command.function.arguments} completed its mission! Result: {result}"
             )
 
             # Add tool response to memory
@@ -168,15 +178,21 @@ class ToolCallAgent(ReActAgent):
             return "Error: Invalid command format"
 
         name = command.function.name
-        if name not in self.available_tools.tool_map:
+        # if name not in self.available_tools.tool_map:
+        #     return f"Error: Unknown tool '{name}'"
+        if not self.available_tools.get_tool(name):
             return f"Error: Unknown tool '{name}'"
 
         try:
             # Parse arguments
-            args = json.loads(command.function.arguments or "{}")
-
+            args = json.loads(command.function.arguments or {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    pass
             # Execute the tool
-            logger.info(f"🔧 Activating tool: '{name}'...")
+            logger.info(f"🔧 Activating tool: '{name}' with args '{args}'")
             result = await self.available_tools.execute(name=name, tool_input=args)
 
             # Handle special tools
